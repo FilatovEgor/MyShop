@@ -1,0 +1,130 @@
+version: '3.4'
+
+services:
+  djangoapp:
+    build: .
+    volumes:
+      - .:/opt/services/djangoapp/src
+      - static_volume:/opt/services/djangoapp/static  # <-- bind the static volume
+      - media_volume:/opt/services/djangoapp/media  # <-- bind the media volume
+    networks:  # <-- here
+      - nginx_network
+      - main
+ #     - celery_network  # <-- connect to the bridge
+    depends_on:  # <-- wait for db to be "ready" before starting the app
+      - mshp.db1
+      - rabbitmq
+  
+#  worker:
+#    build: .
+#    command: ["celery", "worker", "--app=worker.worker.app", "--concurrency=1", "--hostname=worker@%h", "--loglevel=INFO"]
+#    depends_on:
+#      - broker
+#    networks:
+#      - celery_network
+  celery:
+    build: .
+    #container_name: celery-worker1
+    #hostname: worker1
+    #command: ["celery", "worker", "--app=myshop", "--concurrency=1", "--hostname=worker@%h", "--loglevel=INFO"]
+    command: bash -c "cd ./myshop && celery -A myshop worker -l info"
+    #environment:
+    #  - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq//
+    #  - DATABASE_HOST=mshp.db1
+    #working_dir: /opt/services/djangoapp/src
+    volumes:
+      - .:/opt/services/djangoapp/src
+    #  - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - rabbitmq
+    networks:
+      - main
+    restart: on-failure
+
+
+  celery-beat:
+    build: .
+    command: bash -c "cd ./myshop && celery -A myshop beat -l info"
+    #environment:
+    #  - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq//
+    #  - DATABASE_HOST=mshp.db1
+    #working_dir: /opt/services/djangoapp/src
+    volumes:
+      - .:/opt/services/djangoapp/src
+    #  - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - rabbitmq
+    networks:
+      - main
+    restart: on-failure
+
+  flower:
+    #build: .
+    container_name: flower
+    image: mher/flower
+    #command: bash -c "cd ./myshop && celery flower -A myshop --broker=amqp://guest:guest@rabbitmq:5672//"
+    #command: bash -c "cd ./myshop && celery -A myshop flower"
+    #command: ["flower", "--broker=amqp://guest:guest@rabbitmq:5672", "--port=5555"]  
+    command: flower --address=0.0.0.0 --port=5555 --broker_api=http://guest:guest@rabbitmq:15672/api/
+    environment:
+     - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672
+#     - CELERY_RESULT_BACKEND=amqp://guest:guest@rabbitmq:5672
+#     - FLOWER_PORT=5555
+    ports:  
+     - 5555:5555 
+    networks:
+     - main 
+#    restart: "no"
+#    env_file: *envfile
+#    ports:
+#      - "5555:5555"
+#    depends_on:
+#     - rabbitmq
+
+  rabbitmq:
+    image: rabbitmq:latest
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    expose:
+        - 5672
+        - 15672
+    ports:
+        - 15672:15672
+    networks:
+      - main
+
+  nginx:
+    image: nginx:1.17
+    ports:
+      - 8000:80
+    volumes:
+      - ./config/nginx/conf.d:/etc/nginx/conf.d
+      - static_volume:/opt/services/djangoapp/static  # <-- bind the static volume
+      - media_volume:/opt/services/djangoapp/media  # <-- bind the media volume
+    depends_on:  # <-- wait for djangoapp to be "ready" before starting this service
+      - djangoapp
+    networks:  # <-- here
+      - nginx_network
+
+  mshp.db1:  # <-- IMPORTANT: same name as in DATABASES setting, otherwise Django won't find the database!
+    image: postgres:12
+    env_file:  # <-- we use the previously defined values
+      - config/db/mshp.db1_env
+    networks:  # <-- connect to the bridge
+      - main
+    volumes:
+      - dmshp.db1_volume:/var/lib/postgresql/data
+
+networks:  # <-- and here
+  nginx_network:
+    driver: bridge
+  main:
+    driver: bridge
+#  celery_network:
+#    driver: bridge
+
+volumes:
+  dmshp.db1_volume:
+  static_volume:  # <-- declare the static volume
+  media_volume:  # <-- declare the media volume
